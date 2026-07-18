@@ -1,0 +1,49 @@
+name: Build and Release
+
+# Push a tag like "v1.0.0" to trigger a build + attach the exe to a
+# GitHub Release automatically. You can also trigger it manually from
+# the Actions tab (workflow_dispatch) to test a build without releasing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build exe
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed `
+            --name "VoiceChatSoundboard" `
+            --collect-all sounddevice `
+            --collect-all soundfile `
+            --collect-all keyboard `
+            soundboard.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceChatSoundboard-windows
+          path: dist/VoiceChatSoundboard.exe
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/VoiceChatSoundboard.exe

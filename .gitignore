@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Your personal soundboard setup (sound list, device choices) shouldn't be
+# committed - each user gets their own when they first run the app
+soundboard_config.json
+
+# OS junk
+.DS_Store
+Thumbs.db
