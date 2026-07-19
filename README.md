@@ -8,7 +8,7 @@ This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS th
 two virtual audio devices: CABLE Input and CABLE Output. Restart your  
 PC after installing.
 
-2. Go to Settings - System – Sound -. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.**
+2. Go to Settings - System – Sound -. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.
 
 3. Open The Soundboard app.
 
