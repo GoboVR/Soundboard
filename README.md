@@ -8,11 +8,10 @@ This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS th
 two virtual audio devices: CABLE Input and CABLE Output. Restart your  
 PC after installing.
 
-2. Go to Settings - System – Sound -. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.
+2. Go to Settings - System – Sound. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.
+(note: this sets it on the **WINDOWS** level if you want you can do it on app level)
 
 3. Open The Soundboard app.
-
-(note: 4-6 sets it on the **WINDOWS** level if you want you can do it on app level)
 
 4. Set Passthrough to Cable Input.
 
@@ -40,7 +39,7 @@ PC after installing.
 
 - No one hears me in game/vc but the sfxs play!: You need to turn on Passthrough!
 
-- Everyone hears me in game/vc but when I play a sfx it makes a loud echoing sound!: You need to move to Headphones/Earbuds instead of Speakers. If you have to use Speakers Turn Off Passthrough. But if you do this no one will hear you in game. Note: If this happens press the panic button to stop it!
+- Everyone hears me in game/vc but when I play a sfx it makes a loud echoing sound!: You need to move to Headphones/Earbuds instead of Speakers. If you have to use Speakers Turn Off Passthrough. But if you do this no one will hear you in game. Or you can turn off Play SFX locally which will make it go away and other players will hear it but you won't. Note: If this happens press the panic button to stop it!
 
 - mp3 files won't load: convert them to .wav
 
