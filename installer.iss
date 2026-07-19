@@ -16,6 +16,12 @@
 #define MyAppPublisher "GoboVR"
 #define MyAppURL "https://github.com/GoboVR/Soundboard"
 #define MyAppExeName "GobosSoundboard.exe"
+; Same as MyAppName but with the apostrophe doubled - Pascal string literals
+; in [Code] need '' to represent a literal ' inside a '...' string, but the
+; preprocessor just pastes MyAppName's raw text in, so using MyAppName
+; directly inside a Pascal string breaks the moment the name has a quote
+; in it. Use this one instead of MyAppName anywhere inside [Code].
+#define MyAppNamePascal "Gobo''s Soundboard"
 
 [Setup]
 ; Fixed AppId so upgrades/uninstalls recognize previous installs correctly.
@@ -86,7 +92,7 @@ begin
   if not VBCableInstalled() then
   begin
     if MsgBox(
-      '{#MyAppName} needs VB-Audio CABLE (a free virtual audio driver) to route sound effects into your mic / voice chat.' + #13#10 + #13#10 +
+      '{#MyAppNamePascal} needs VB-Audio CABLE (a free virtual audio driver) to route sound effects into your mic / voice chat.' + #13#10 + #13#10 +
       'It doesn''t look like VB-CABLE is installed on this PC yet.' + #13#10 + #13#10 +
       'Open the download page now? (You can install it before or after this setup finishes.)',
       mbConfirmation, MB_YESNO) = IDYES then
