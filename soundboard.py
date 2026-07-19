@@ -64,12 +64,31 @@ except ImportError:
 
 
 def _app_dir():
-    """Folder the config file lives in. When frozen by PyInstaller (onefile),
-    __file__ points at a temporary extraction folder that gets wiped on
-    exit, so use the .exe's own folder instead in that case."""
+    """Folder the config file lives in.
+
+    - Dev run (python soundboard.py): next to the script.
+    - Portable exe: next to the exe, so the whole thing stays one movable
+      unit.
+    - Installed exe (e.g. in Program Files via the installer): the exe's
+      own folder usually isn't writable without admin, so fall back to a
+      per-user AppData folder instead.
+    """
     if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+        candidate = os.path.dirname(sys.executable)
+    else:
+        candidate = os.path.dirname(os.path.abspath(__file__))
+
+    try:
+        probe = os.path.join(candidate, ".write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+        return candidate
+    except Exception:
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        fallback = os.path.join(appdata, "VoiceChatSoundboard")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
 
 
 def safe_log(msg):
@@ -84,7 +103,7 @@ def safe_log(msg):
 
 CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 GITHUB_REPO = "GoboVR/Soundboard"
 

@@ -41,9 +41,31 @@ REM Scripts folder isn't on PATH.
 
 echo.
 if exist dist\VoiceChatSoundboard.exe (
-    echo SUCCESS. Your exe is at: dist\VoiceChatSoundboard.exe
+    echo SUCCESS. Your portable exe is at: dist\VoiceChatSoundboard.exe
     echo You can copy that single file anywhere and run it directly.
 ) else (
     echo Something went wrong - scroll up for the error from PyInstaller.
+    pause
+    exit /b 1
 )
+
+echo.
+echo Looking for Inno Setup to also build the installer...
+set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if not exist %ISCC% set ISCC="C:\Program Files\Inno Setup 6\ISCC.exe"
+
+if exist %ISCC% (
+    echo Found Inno Setup - building installer too...
+    %ISCC% installer.iss
+    if exist installer_output\VoiceChatSoundboard-Setup.exe (
+        echo SUCCESS. Your installer is at: installer_output\VoiceChatSoundboard-Setup.exe
+    ) else (
+        echo Installer build failed - scroll up for the error from ISCC.
+    )
+) else (
+    echo Inno Setup not found - skipping the installer build.
+    echo ^(This is optional. Install it from https://jrsoftware.org/isdl.php
+    echo  and re-run this script if you also want a Setup.exe installer.^)
+)
+
 pause
