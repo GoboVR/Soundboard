@@ -1,5 +1,4 @@
-## **Gobo’s Soundboard**
-
+## **Gobo’s Soundboard** <img width="120" height="120" alt="gobo_logo_transparent" src="https://github.com/user-attachments/assets/0f1cd574-5555-4ba3-a70c-01d6047297f6" />
 This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS through your mic. This is a **VIBECODED** app! That means I used AI (to be specific Claude) to make this. (Because I can’t code to save my life). I made this because **EVERY** free soundboard I tried (Soundpad, Voicemod 2, Voicemod 3, etc) had either a limit on sounds or had ads. So using Claude I made this.
 
 ## **Instructions**
