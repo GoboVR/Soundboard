@@ -103,7 +103,7 @@ def safe_log(msg):
 
 CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.1"
 
 GITHUB_REPO = "GoboVR/Soundboard"
 
