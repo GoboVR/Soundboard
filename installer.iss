@@ -48,6 +48,17 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [Files]
 Source: "dist\GobosSoundboard.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 
+[InstallDelete]
+; Cleans up leftovers from the pre-rename "Voice Chat Soundboard" builds
+; (same AppId, so this counts as an upgrade and reuses the old install
+; folder - but the old exe/shortcut names aren't in [Files]/[Icons]
+; anymore, so without this they'd be orphaned instead of replaced).
+Type: files; Name: "{app}\VoiceChatSoundboard.exe"
+Type: files; Name: "{commonprograms}\Voice Chat Soundboard\Voice Chat Soundboard.lnk"
+Type: files; Name: "{commonprograms}\Voice Chat Soundboard\Uninstall Voice Chat Soundboard.lnk"
+Type: dirifempty; Name: "{commonprograms}\Voice Chat Soundboard"
+Type: files; Name: "{autodesktop}\Voice Chat Soundboard.lnk"
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
@@ -75,7 +86,7 @@ begin
   if not VBCableInstalled() then
   begin
     if MsgBox(
-      'Voice Chat Soundboard needs VB-Audio CABLE (a free virtual audio driver) to route sound effects into your mic / voice chat.' + #13#10 + #13#10 +
+      '{#MyAppName} needs VB-Audio CABLE (a free virtual audio driver) to route sound effects into your mic / voice chat.' + #13#10 + #13#10 +
       'It doesn''t look like VB-CABLE is installed on this PC yet.' + #13#10 + #13#10 +
       'Open the download page now? (You can install it before or after this setup finishes.)',
       mbConfirmation, MB_YESNO) = IDYES then
