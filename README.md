@@ -6,7 +6,7 @@ This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS th
 
 1. Download and install VB-Audio Cable from [https://vb-audio.com/Cable/](https://vb-audio.com/Cable/). This creates  
 two virtual audio devices: CABLE Input and CABLE Output. Restart your  
-PC after installing.**
+PC after installing.
 
 2. Go to Settings - System – Sound -. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.**
 
