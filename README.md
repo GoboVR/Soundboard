@@ -1,4 +1,5 @@
-## **Gobo’s Soundboard** <img width="120" height="120" alt="gobo_logo_transparent" src="https://github.com/user-attachments/assets/0f1cd574-5555-4ba3-a70c-01d6047297f6" />
+## **Gobo’s Soundboard**
+
 This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS through your mic. This is a **VIBECODED** app! That means I used AI (to be specific Claude) to make this. (Because I can’t code to save my life). I made this because **EVERY** free soundboard I tried (Soundpad, Voicemod 2, Voicemod 3, etc) had either a limit on sounds or had ads. So using Claude I made this.
 
 ## **Instructions**
@@ -7,28 +8,35 @@ This is Gobo’s Soundboard! It’s a **WINDOWS** app that lets you play SFXS th
 two virtual audio devices: CABLE Input and CABLE Output. Restart your  
 PC after installing.
 
-2. Go to Settings - System – Sound. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot.
-(note: this sets it on the **WINDOWS** level if you want you can do it on app level)
+2. Install FFMPeg by opening CMD/Powershell and run this command:
 
-3. Open The Soundboard app.
+```
+winget install Gyan.FFmpeg
+```
 
-4. Set Passthrough to Cable Input.
+1. Go to Settings - System – Sound. Then Set your speakers to Cable Input and set your mic to Cable Output. You MIGHT have to re set it every reboot. (note: this sets it on the **WINDOWS** level if you want you can do it on app level)
 
-5. Set Mic Input: to your mic.
+2. Open The Soundboard app.
 
-6. Set Play Locally on: to your speakers.
+3. Set Passthrough to Cable Input.
 
-7. Add your sfxs!
+4. Set Mic Input: to your mic.
+
+5. Set Play Locally on: to your speakers.
+
+6. Add your sfxs!
 
 ## **Build Instructions**
 
-	Idk why you would do this because there is a pre built .exe in Releases but this is how.
+```
+Idk why you would do this because there is a pre built .exe in Releases but this is how.
+```
 
 1. Make sure soundboard.py, requirements.txt, and build\_exe.bat are all in the same folder.
 
 2. Run build\_exe.bat. It installs dependencies + PyInstaller and builds the exe for you.
 
-3. *When it finishes it will be in C:\\Path\\The\\Bat\\Is\\In\\dist\\ as VoiceChatSoundboard.exe
+3. \*When it finishes it will be in C:\\Path\\The\\Bat\\Is\\In\\dist\\ as VoiceChatSoundboard.exe
 
 ## **Troubleshooting**
 

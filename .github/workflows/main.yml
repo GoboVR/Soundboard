@@ -49,6 +49,7 @@ jobs:
             --collect-all sounddevice `
             --collect-all soundfile `
             --collect-all keyboard `
+            --collect-all yt_dlp `
             soundboard.py
 
       - name: Rename portable exe for release clarity

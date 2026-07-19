@@ -42,6 +42,7 @@ REM icon at runtime via _resource_path().
     --collect-all sounddevice ^
     --collect-all soundfile ^
     --collect-all keyboard ^
+    --collect-all yt_dlp ^
     soundboard.py
 
 echo.

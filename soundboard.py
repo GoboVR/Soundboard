@@ -62,6 +62,11 @@ try:
 except ImportError:
     kb = None
 
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
 
 def _app_dir():
     """Folder the config file lives in.
@@ -105,7 +110,7 @@ CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
 APP_NAME = "Gobo's Soundboard"
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 
 GITHUB_REPO = "GoboVR/Soundboard"
 
@@ -247,6 +252,73 @@ def _wasapi_extra_settings(device_idx):
     except Exception:
         pass
     return None
+
+
+def _default_download_dir():
+    """Where downloaded sfx land by default - a folder next to wherever
+    the config file lives, so it moves with the portable exe or lands in
+    the same per-user AppData folder as an installed copy."""
+    return os.path.join(_app_dir(), "downloaded_sfx")
+
+
+def _sanitize_filename(name):
+    """Strip characters Windows filenames can't contain, trim to a
+    reasonable length, and fall back to something non-empty."""
+    bad_chars = '<>:"/\\|?*'
+    cleaned = "".join(c for c in name if c not in bad_chars).strip()
+    cleaned = cleaned.rstrip(". ")  # Windows also dislikes trailing dots/spaces
+    return cleaned[:80] if cleaned else "downloaded_sound"
+
+
+def _unique_path(path):
+    """Append ' (2)', ' (3)', etc. if path already exists, so downloads
+    never silently overwrite an existing sound file."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    i = 2
+    while os.path.exists(f"{base} ({i}){ext}"):
+        i += 1
+    return f"{base} ({i}){ext}"
+
+
+def download_youtube_audio(url, out_dir, base_filename, progress_hook=None):
+    """Downloads the audio from a YouTube (or anywhere yt-dlp supports)
+    URL and converts it to a .wav file in out_dir. Requires the 'yt-dlp'
+    package and an ffmpeg binary on PATH (yt-dlp shells out to it for the
+    audio extraction/conversion step). Returns (wav_path, video_title).
+    Raises on any failure - caller is expected to catch and report it."""
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp isn't installed. Run: pip install yt-dlp")
+
+    os.makedirs(out_dir, exist_ok=True)
+    outtmpl = os.path.join(out_dir, base_filename + ".%(ext)s")
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": outtmpl,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "wav",
+        }],
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "restrictfilenames": True,
+    }
+    if progress_hook is not None:
+        ydl_opts["progress_hooks"] = [progress_hook]
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        title = info.get("title") or base_filename
+
+    wav_path = os.path.join(out_dir, base_filename + ".wav")
+    if not os.path.exists(wav_path):
+        raise RuntimeError(
+            "Download finished but no .wav file was produced - this usually means "
+            "ffmpeg isn't installed or isn't on PATH (yt-dlp needs it to convert to wav)."
+        )
+    return wav_path, title
 
 
 class StreamHandle:
@@ -504,6 +576,7 @@ class SoundboardApp:
         self.volume = tk.DoubleVar(value=1.0)
         self.play_locally = tk.BooleanVar(value=True)
         self.passthrough_enabled = tk.BooleanVar(value=False)
+        self.download_dir_var = tk.StringVar(value=_default_download_dir())
 
         self.mixer = MicSfxMixer()
 
@@ -532,57 +605,42 @@ class SoundboardApp:
         top = tk.Frame(self.root, padx=10, pady=10)
         top.pack(fill=tk.X)
 
-        tk.Label(top, text="Sfx / Passthrough Output (set to CABLE Input):").grid(row=0, column=0, sticky="w")
-        self.out_device_var = tk.StringVar()
-        self.out_device_menu = tk.OptionMenu(top, self.out_device_var, "")
-        self.out_device_menu.config(width=38)
-        self.out_device_menu.grid(row=0, column=1, sticky="w", padx=5)
-
-        tk.Label(top, text="Mic Input (your real microphone):").grid(row=1, column=0, sticky="w")
-        self.mic_device_var = tk.StringVar()
-        self.mic_device_menu = tk.OptionMenu(top, self.mic_device_var, "")
-        self.mic_device_menu.config(width=38)
-        self.mic_device_menu.grid(row=1, column=1, sticky="w", padx=5)
-
-        tk.Label(top, text="Play locally on:").grid(row=2, column=0, sticky="w")
-        self.local_device_var = tk.StringVar()
-        self.local_device_menu = tk.OptionMenu(top, self.local_device_var, "")
-        self.local_device_menu.config(width=38)
-        self.local_device_menu.grid(row=2, column=1, sticky="w", padx=5)
-
-        tk.Checkbutton(top, text="Play sfx locally too", variable=self.play_locally).grid(
-            row=2, column=2, sticky="w", padx=10
-        )
-
-        tk.Button(top, text="Refresh Devices", command=self._refresh_devices).grid(row=0, column=2, padx=10, sticky="w")
-
+        # Device pickers (Mic Input / Sfx Output / Play Locally On) and the
+        # download folder now live in the Settings dialog - keep this
+        # frame lean for the controls people actually reach for mid-game.
         self.passthrough_check = tk.Checkbutton(
             top, text="Enable Mic + SFX Passthrough (talk and play sfx together)",
             variable=self.passthrough_enabled, command=self._toggle_passthrough,
             font=("TkDefaultFont", 9, "bold"),
         )
-        self.passthrough_check.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.passthrough_check.grid(row=0, column=0, columnspan=3, sticky="w")
 
         self.status_label = tk.Label(top, text="Passthrough: OFF - sounds will play alone (mic not relayed)", fg="#a60")
-        self.status_label.grid(row=4, column=0, columnspan=3, sticky="w")
+        self.status_label.grid(row=1, column=0, columnspan=3, sticky="w")
 
         hotkey_note = "Panic stop: Escape key (app focused)"
         if kb is not None:
             hotkey_note += " or Ctrl+Alt+P (works globally)"
-        tk.Label(top, text=hotkey_note, fg="#888").grid(row=5, column=0, columnspan=3, sticky="w")
+        tk.Label(top, text=hotkey_note, fg="#888").grid(row=2, column=0, columnspan=3, sticky="w")
 
-        tk.Label(top, text="Volume").grid(row=0, column=3, padx=(20, 0))
+        tk.Button(top, text="\u2699 Settings", width=12, command=self._open_settings_dialog).grid(
+            row=0, column=3, padx=(20, 0), sticky="ew"
+        )
+
+        tk.Label(top, text="Volume").grid(row=1, column=3, padx=(20, 0), sticky="w")
         tk.Scale(top, from_=0, to=2, resolution=0.05, orient=tk.HORIZONTAL,
-                 variable=self.volume, length=140).grid(row=0, column=4)
+                 variable=self.volume, length=140).grid(row=1, column=4, sticky="w")
 
         tk.Button(top, text="Stop All Sfx", fg="white", bg="#b33", command=self.stop_all).grid(
-            row=1, column=3, columnspan=2, sticky="ew", padx=(20, 0)
+            row=2, column=3, columnspan=2, sticky="ew", padx=(20, 0), pady=(4, 0)
         )
 
         tk.Button(top, text="PANIC - Kill Passthrough", fg="white", bg="#900",
                   font=("TkDefaultFont", 9, "bold"), command=self.panic_stop).grid(
-            row=2, column=3, columnspan=2, sticky="ew", padx=(20, 0), pady=(4, 0)
+            row=3, column=3, columnspan=2, sticky="ew", padx=(20, 0), pady=(4, 0)
         )
+
+        self._build_settings_dialog()
 
         # Update-available banner - hidden until an update check finds one
         self.update_banner = tk.Label(self.root, text="", fg="#06c", cursor="", anchor="w")
@@ -641,6 +699,7 @@ class SoundboardApp:
         add_row.pack(fill=tk.X)
         tk.Button(add_row, text="+ Add Sound", command=self.add_sound).pack(side=tk.LEFT)
         tk.Button(add_row, text="+ Add Whole Folder", command=self.add_folder).pack(side=tk.LEFT, padx=5)
+        tk.Button(add_row, text="+ Download from YouTube", command=self.open_download_dialog).pack(side=tk.LEFT, padx=5)
 
         tk.Label(add_row, text="Search:").pack(side=tk.LEFT, padx=(20, 2))
         self.search_var = tk.StringVar()
@@ -686,6 +745,74 @@ class SoundboardApp:
                 pass
 
         self._update_now_playing_ui()  # kicks off the recurring refresh loop
+
+    # ---------------------------------------------------------- settings dialog
+    def _build_settings_dialog(self):
+        """Built once at startup (so the device-list widgets exist for
+        _refresh_devices() from the very first launch) but kept hidden
+        until the user clicks the Settings button."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"{APP_NAME} - Settings")
+        dlg.geometry("560x360")
+        dlg.resizable(False, False)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.withdraw)  # X button hides, doesn't destroy
+        dlg.withdraw()
+        self.settings_dialog = dlg
+
+        devices_frame = tk.LabelFrame(dlg, text="Audio Devices", padx=10, pady=8)
+        devices_frame.pack(fill=tk.X, padx=12, pady=(12, 6))
+
+        tk.Label(devices_frame, text="Sfx / Passthrough Output (set to CABLE Input):").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.out_device_var = tk.StringVar()
+        self.out_device_menu = tk.OptionMenu(devices_frame, self.out_device_var, "")
+        self.out_device_menu.config(width=38)
+        self.out_device_menu.grid(row=0, column=1, sticky="w", padx=5, pady=3)
+
+        tk.Label(devices_frame, text="Mic Input (your real microphone):").grid(row=1, column=0, sticky="w")
+        self.mic_device_var = tk.StringVar()
+        self.mic_device_menu = tk.OptionMenu(devices_frame, self.mic_device_var, "")
+        self.mic_device_menu.config(width=38)
+        self.mic_device_menu.grid(row=1, column=1, sticky="w", padx=5, pady=3)
+
+        tk.Label(devices_frame, text="Play locally on:").grid(row=2, column=0, sticky="w")
+        self.local_device_var = tk.StringVar()
+        self.local_device_menu = tk.OptionMenu(devices_frame, self.local_device_var, "")
+        self.local_device_menu.config(width=38)
+        self.local_device_menu.grid(row=2, column=1, sticky="w", padx=5, pady=3)
+
+        tk.Checkbutton(devices_frame, text="Play sfx locally too", variable=self.play_locally).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        tk.Button(devices_frame, text="Refresh Devices", command=self._refresh_devices).grid(
+            row=0, column=2, padx=(15, 0)
+        )
+
+        downloads_frame = tk.LabelFrame(dlg, text="Downloads", padx=10, pady=8)
+        downloads_frame.pack(fill=tk.X, padx=12, pady=6)
+
+        tk.Label(downloads_frame, text="Save downloaded sounds to:").grid(row=0, column=0, sticky="w")
+        tk.Entry(downloads_frame, textvariable=self.download_dir_var, width=48).grid(
+            row=1, column=0, sticky="w", pady=(2, 0)
+        )
+        tk.Button(downloads_frame, text="Browse...", command=self._browse_download_dir).grid(
+            row=1, column=1, padx=(8, 0), pady=(2, 0)
+        )
+
+        tk.Button(dlg, text="Close", width=10, command=dlg.withdraw).pack(pady=(6, 12))
+
+    def _open_settings_dialog(self):
+        self.settings_dialog.deiconify()
+        self.settings_dialog.lift()
+        self.settings_dialog.focus_force()
+
+    def _browse_download_dir(self):
+        chosen = filedialog.askdirectory(initialdir=self.download_dir_var.get() or _default_download_dir())
+        if chosen:
+            self.download_dir_var.set(chosen)
+            self._save_config()
 
     # ---------------------------------------------------------- devices
     def _refresh_devices(self):
@@ -788,6 +915,108 @@ class SoundboardApp:
         self._save_config()
         self._refresh_buttons()
         messagebox.showinfo("Added", f"Added {count} sounds from folder.")
+
+    # ---------------------------------------------------------- youtube downloader
+    def open_download_dialog(self):
+        if yt_dlp is None:
+            messagebox.showerror(
+                "Missing dependency",
+                "The YouTube downloader needs the 'yt-dlp' package.\n\n"
+                "Install it with: pip install yt-dlp\n\n"
+                "You'll also need ffmpeg installed and on PATH (same requirement "
+                "as mp3 support) since that's what converts the audio to .wav.",
+            )
+            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Download from YouTube")
+        dlg.geometry("440x230")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+
+        tk.Label(dlg, text="YouTube URL:").pack(anchor="w", padx=12, pady=(12, 0))
+        url_var = tk.StringVar()
+        url_entry = tk.Entry(dlg, textvariable=url_var, width=54)
+        url_entry.pack(padx=12, pady=(2, 8), fill=tk.X)
+        url_entry.focus_set()
+
+        tk.Label(dlg, text="Sound name (optional - uses the video title if left blank):").pack(
+            anchor="w", padx=12
+        )
+        name_var = tk.StringVar()
+        tk.Entry(dlg, textvariable=name_var, width=54).pack(padx=12, pady=(2, 8), fill=tk.X)
+
+        tk.Label(dlg, text=f"Saving to: {self.download_dir_var.get()}", fg="#888", anchor="w").pack(
+            padx=12, fill=tk.X
+        )
+
+        status_var = tk.StringVar(value="")
+        tk.Label(dlg, textvariable=status_var, fg="#666").pack(padx=12, pady=(4, 0), anchor="w")
+
+        progress = ttk.Progressbar(dlg, mode="indeterminate")
+        progress.pack(padx=12, pady=8, fill=tk.X)
+
+        download_btn = tk.Button(
+            dlg, text="Download",
+            command=lambda: self._start_download(url_var, name_var, status_var, progress, download_btn, dlg),
+        )
+        download_btn.pack(pady=(0, 10))
+
+    def _start_download(self, url_var, name_var, status_var, progress, download_btn, dlg):
+        url = url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Missing URL", "Paste a YouTube link first.")
+            return
+        download_btn.config(state=tk.DISABLED)
+        progress.start(12)
+        status_var.set("Downloading...")
+        threading.Thread(
+            target=self._download_youtube_thread,
+            args=(url, name_var.get().strip(), status_var, progress, download_btn, dlg),
+            daemon=True,
+        ).start()
+
+    def _download_youtube_thread(self, url, custom_name, status_var, progress, download_btn, dlg):
+        out_dir = self.download_dir_var.get().strip() or _default_download_dir()
+
+        def hook(d):
+            if d.get("status") == "downloading":
+                pct = d.get("_percent_str", "").strip()
+                self.root.after(0, lambda: status_var.set(f"Downloading... {pct}"))
+            elif d.get("status") == "finished":
+                self.root.after(0, lambda: status_var.set("Converting to .wav..."))
+
+        temp_base = f"yt_{int(time.time() * 1000)}"
+        try:
+            wav_path, title = download_youtube_audio(url, out_dir, temp_base, progress_hook=hook)
+        except Exception as e:
+            self._finish_download(dlg, progress, download_btn, error=str(e))
+            return
+
+        display_name = custom_name or title or temp_base
+        target_path = _unique_path(os.path.join(out_dir, _sanitize_filename(display_name) + ".wav"))
+        try:
+            os.replace(wav_path, target_path)
+        except Exception:
+            target_path = wav_path  # fall back to wherever yt-dlp actually put it
+
+        self._register_sound(Sound(display_name, target_path))
+        self._save_config()
+        self._finish_download(dlg, progress, download_btn, error=None)
+
+    def _finish_download(self, dlg, progress, download_btn, error):
+        def _apply():
+            progress.stop()
+            if error:
+                download_btn.config(state=tk.NORMAL)
+                messagebox.showerror("Download failed", error)
+            else:
+                self._refresh_buttons()
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+        self.root.after(0, _apply)
 
     def _register_sound(self, sound):
         self.sounds.append(sound)
@@ -1094,6 +1323,7 @@ class SoundboardApp:
             "local_device": self.local_device_var.get(),
             "play_locally": self.play_locally.get(),
             "volume": self.volume.get(),
+            "download_dir": self.download_dir_var.get(),
         }
         try:
             with open(CONFIG_PATH, "w") as f:
@@ -1121,6 +1351,8 @@ class SoundboardApp:
             self.mic_device_var.set(data["mic_device"])
         if data.get("local_device"):
             self.local_device_var.set(data["local_device"])
+        if data.get("download_dir"):
+            self.download_dir_var.set(data["download_dir"])
         self.play_locally.set(data.get("play_locally", True))
         self.volume.set(data.get("volume", 1.0))
 

@@ -3,3 +3,4 @@ soundfile
 numpy
 pydub
 keyboard
+yt-dlp

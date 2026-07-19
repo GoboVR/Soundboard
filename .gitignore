@@ -15,3 +15,4 @@ soundboard_config.json
 .DS_Store
 Thumbs.db
 .~lock.README.md\#
+/downloaded_sfx
