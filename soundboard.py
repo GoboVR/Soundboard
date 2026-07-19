@@ -37,8 +37,12 @@ import os
 import queue
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
+import webbrowser
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import numpy as np
 import sounddevice as sd
@@ -80,9 +84,53 @@ def safe_log(msg):
 
 CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
+APP_VERSION = "1.1.0"
+
+GITHUB_REPO = "GoboVR/Soundboard"
+
 MIX_SAMPLERATE = 48000  # fixed rate used for the live mic+sfx mixer
 MIX_BLOCKSIZE = 1024
 MIX_CHANNELS = 2
+
+
+def _version_tuple(v):
+    """'v1.2.3' / '1.2.3' -> (1, 2, 3), for simple numeric comparison."""
+    parts = []
+    for p in v.strip().lstrip("vV").split("."):
+        num = ""
+        for ch in p:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return tuple(parts)
+
+
+def check_for_update(current_version, repo, callback):
+    """Background-thread GitHub 'latest release' check. Calls
+    callback(latest_version_or_None, html_url_or_None) when done - None
+    means either nothing newer or the check failed (offline, repo not set
+    up, rate limited, etc). Never raises."""
+    def _worker():
+        latest_version = None
+        html_url = None
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/releases/latest",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "SoundboardUpdateCheck"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            tag = data.get("tag_name", "")
+            if tag and _version_tuple(tag) > _version_tuple(current_version):
+                latest_version = tag
+                html_url = data.get("html_url")
+        except Exception:
+            pass
+        callback(latest_version, html_url)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 class Sound:
@@ -150,20 +198,70 @@ def prepare_for_stream(data, orig_sr, target_sr, target_channels):
     return np.ascontiguousarray(data, dtype=np.float32)
 
 
-def _play_on_device(data, samplerate, device_idx):
-    """Fire-and-forget playback of a numpy buffer on a specific device -
-    used for the local monitor copy, independent of everything else."""
-    stream = sd.OutputStream(samplerate=samplerate, device=device_idx, channels=data.shape[1])
-    stream.start()
+class StreamHandle:
+    """A controllable playback of one numpy buffer on one device, starting
+    at an optional frame offset. Unlike a bare sd.play() call, this can be
+    stopped early (used to implement seek/pause: stop the old handle, start
+    a new one at the new offset)."""
 
-    def _writer():
-        try:
-            stream.write(data)
-        finally:
-            stream.stop()
-            stream.close()
+    def __init__(self, data, samplerate, device_idx, start_frame=0):
+        self.stream = sd.OutputStream(samplerate=samplerate, device=device_idx, channels=data.shape[1])
+        self._stop_event = threading.Event()
+        self.stream.start()
 
-    threading.Thread(target=_writer, daemon=True).start()
+        def _writer():
+            block = 2048
+            chunk = data[start_frame:]
+            i = 0
+            try:
+                while i < chunk.shape[0] and not self._stop_event.is_set():
+                    self.stream.write(chunk[i:i + block])
+                    i += block
+            except Exception:
+                pass
+            finally:
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_writer, daemon=True).start()
+
+    def stop(self):
+        self._stop_event.set()
+
+
+class PlayingItem:
+    """One in-progress playback of a Sound - tracks enough state (which
+    device(s), the raw audio, current position) to be shown in the
+    'Currently Playing' list and scrubbed/paused/stopped individually."""
+
+    _next_id = 1
+
+    def __init__(self, sound, data, samplerate, out_idx, local_idx):
+        self.id = PlayingItem._next_id
+        PlayingItem._next_id += 1
+        self.sound = sound
+        self.data = data
+        self.samplerate = samplerate
+        self.total_seconds = data.shape[0] / float(samplerate)
+        self.offset_seconds = 0.0
+        self.started_at = time.time()  # None while paused
+        self.out_idx = out_idx
+        self.local_idx = local_idx
+        self.via_mixer = False
+        self.mixer_item = None  # [data, pos] reference inside MicSfxMixer, when via_mixer
+        self.out_stream_handle = None
+        self.local_stream_handle = None
+
+    def current_seconds(self):
+        if self.started_at is None:
+            return min(self.offset_seconds, self.total_seconds)
+        return min(self.offset_seconds + (time.time() - self.started_at), self.total_seconds)
+
+    def is_playing(self):
+        return self.started_at is not None
 
 
 # ---------------------------------------------------------------- mixer
@@ -212,10 +310,34 @@ class MicSfxMixer:
         with self._active_lock:
             self._active_sfx = []
 
-    def add_sfx(self, raw_data, orig_sr):
+    def add_sfx_item(self, raw_data, orig_sr, start_seconds=0.0):
+        """Adds a sound to the live mix and returns the [data, pos] item
+        reference, so the caller can later seek/remove this specific
+        instance via seek_item()/remove_item()."""
         data = prepare_for_stream(raw_data, orig_sr, self.samplerate, self.channels)
+        start_frame = int(max(0.0, start_seconds) * self.samplerate)
+        start_frame = min(start_frame, max(0, data.shape[0] - 1))
+        item = [data, start_frame]
         with self._active_lock:
-            self._active_sfx.append([data, 0])
+            self._active_sfx.append(item)
+        return item
+
+    def seek_item(self, item, seconds):
+        """Move an item (already-playing or just-paused) to a new position
+        and make sure it's in the active mix."""
+        frame = int(max(0.0, seconds) * self.samplerate)
+        frame = min(frame, max(0, item[0].shape[0] - 1))
+        with self._active_lock:
+            item[1] = frame
+            if item not in self._active_sfx:
+                self._active_sfx.append(item)
+
+    def remove_item(self, item):
+        with self._active_lock:
+            try:
+                self._active_sfx.remove(item)
+            except ValueError:
+                pass
 
     def clear_sfx(self):
         with self._active_lock:
@@ -262,9 +384,9 @@ class MicSfxMixer:
 class SoundboardApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Voice Chat Soundboard")
-        self.root.geometry("950x680")
-        self.root.minsize(650, 420)
+        self.root.title(f"Voice Chat Soundboard v{APP_VERSION}")
+        self.root.geometry("950x760")
+        self.root.minsize(650, 480)
 
         self.sounds = []
         self.volume = tk.DoubleVar(value=1.0)
@@ -273,8 +395,14 @@ class SoundboardApp:
 
         self.mixer = MicSfxMixer()
 
+        self.playing_items = []        # list of PlayingItem currently in progress
+        self.selected_playing_id = None
+        self._scrub_dragging = False
+
         self._build_ui()
         self._load_config()
+
+        check_for_update(APP_VERSION, GITHUB_REPO, lambda lv, url: self._handle_update_result(lv, url, manual=False))
 
     # ---------------------------------------------------------- UI setup
     def _build_ui(self):
@@ -333,6 +461,58 @@ class SoundboardApp:
             row=2, column=3, columnspan=2, sticky="ew", padx=(20, 0), pady=(4, 0)
         )
 
+        # Update-available banner - hidden until an update check finds one
+        self.update_banner = tk.Label(self.root, text="", fg="#06c", cursor="", anchor="w")
+
+        # Currently Playing panel: shows every sfx instance in progress.
+        # Click one to select it, then scrub/pause/stop just that instance.
+        playing_frame = tk.LabelFrame(self.root, text="Currently Playing", padx=8, pady=6)
+        playing_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
+
+        tree_container = tk.Frame(playing_frame)
+        tree_container.pack(fill=tk.X)
+
+        self.playing_tree = ttk.Treeview(
+            tree_container, columns=("time",), show="tree headings", height=4, selectmode="browse"
+        )
+        self.playing_tree.heading("#0", text="Sound")
+        self.playing_tree.heading("time", text="Time")
+        self.playing_tree.column("#0", width=280, anchor="w")
+        self.playing_tree.column("time", width=110, anchor="center")
+        self.playing_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.playing_tree.bind("<<TreeviewSelect>>", self._on_playing_select)
+
+        tree_scroll = tk.Scrollbar(tree_container, orient="vertical", command=self.playing_tree.yview)
+        self.playing_tree.configure(yscrollcommand=tree_scroll.set)
+        tree_scroll.pack(side=tk.LEFT, fill=tk.Y)
+
+        scrub_row = tk.Frame(playing_frame)
+        scrub_row.pack(fill=tk.X, pady=(6, 0))
+
+        self.scrub_label = tk.Label(scrub_row, text="(select a sound from the list above)", width=26, anchor="w")
+        self.scrub_label.pack(side=tk.LEFT)
+
+        self.scrub_elapsed_label = tk.Label(scrub_row, text="0:00", width=5)
+        self.scrub_elapsed_label.pack(side=tk.LEFT)
+
+        self.scrub_var = tk.DoubleVar(value=0.0)
+        self.scrub_scale = tk.Scale(
+            scrub_row, from_=0, to=1, orient=tk.HORIZONTAL, showvalue=False,
+            variable=self.scrub_var, length=320, resolution=0.01, state=tk.DISABLED,
+        )
+        self.scrub_scale.pack(side=tk.LEFT, padx=6, fill=tk.X, expand=True)
+        self.scrub_scale.bind("<ButtonPress-1>", lambda e: setattr(self, "_scrub_dragging", True))
+        self.scrub_scale.bind("<ButtonRelease-1>", self._on_scrub_release)
+
+        self.scrub_total_label = tk.Label(scrub_row, text="0:00", width=5)
+        self.scrub_total_label.pack(side=tk.LEFT)
+
+        self.pause_btn = tk.Button(scrub_row, text="Pause", width=8, state=tk.DISABLED, command=self._toggle_pause_selected)
+        self.pause_btn.pack(side=tk.LEFT, padx=(8, 4))
+
+        self.stop_selected_btn = tk.Button(scrub_row, text="Stop", width=6, state=tk.DISABLED, command=self._stop_selected)
+        self.stop_selected_btn.pack(side=tk.LEFT)
+
         # Add / search row
         add_row = tk.Frame(self.root, padx=10)
         add_row.pack(fill=tk.X)
@@ -344,9 +524,11 @@ class SoundboardApp:
         self.search_var.trace_add("write", lambda *a: self._refresh_buttons())
         tk.Entry(add_row, textvariable=self.search_var, width=25).pack(side=tk.LEFT)
 
+        tk.Button(add_row, text="Check for Updates", command=self._manual_check_update).pack(side=tk.RIGHT)
+
         if kb is None:
             tk.Label(add_row, text="(install 'keyboard' package to enable global hotkeys)",
-                     fg="#888").pack(side=tk.RIGHT)
+                     fg="#888").pack(side=tk.RIGHT, padx=10)
 
         # Scrollable button grid
         container = tk.Frame(self.root)
@@ -379,6 +561,8 @@ class SoundboardApp:
                 kb.add_hotkey("ctrl+alt+p", self.panic_stop)
             except Exception:
                 pass
+
+        self._update_now_playing_ui()  # kicks off the recurring refresh loop
 
     # ---------------------------------------------------------- devices
     def _refresh_devices(self):
@@ -549,30 +733,184 @@ class SoundboardApp:
         if vol != 1.0:
             data = np.clip(data * vol, -1.0, 1.0)
 
+        out_idx = self._device_index(self.out_device_var.get())
+        local_idx = self._device_index(self.local_device_var.get())
+
+        item = PlayingItem(sound, data, samplerate, out_idx, local_idx)
+
         if self.mixer.running:
             # Mic + sfx are both live on the output device via the mixer.
-            self.mixer.add_sfx(data, samplerate)
+            item.via_mixer = True
+            item.mixer_item = self.mixer.add_sfx_item(data, samplerate, start_seconds=0.0)
         else:
             # No passthrough - just send the sfx alone to the output device.
-            out_idx = self._device_index(self.out_device_var.get())
             try:
-                sd.play(data, samplerate, device=out_idx, blocking=False)
+                item.out_stream_handle = StreamHandle(data, samplerate, out_idx, start_frame=0)
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror("Playback Error", f"Output device: {e}"))
                 return
 
-        if self.play_locally.get():
-            local_idx = self._device_index(self.local_device_var.get())
-            out_idx = self._device_index(self.out_device_var.get())
-            if local_idx is not None and local_idx != out_idx:
-                try:
-                    _play_on_device(data, samplerate, local_idx)
-                except Exception:
-                    pass
+        if self.play_locally.get() and local_idx is not None and local_idx != out_idx:
+            try:
+                item.local_stream_handle = StreamHandle(data, samplerate, local_idx, start_frame=0)
+            except Exception:
+                item.local_stream_handle = None
+
+        # Newly played sound becomes the one shown/selected in the list -
+        # the Treeview insert + selection itself happens on the main thread
+        # inside _update_now_playing_ui, since this is a background thread.
+        self.playing_items.append(item)
+        self.selected_playing_id = item.id
+
+    def _get_playing_item(self, item_id):
+        for it in self.playing_items:
+            if it.id == item_id:
+                return it
+        return None
+
+    def _terminate_item(self, item):
+        """Stop this one instance's audio and drop it from tracking/UI."""
+        if item.via_mixer and item.mixer_item is not None:
+            self.mixer.remove_item(item.mixer_item)
+        if item.out_stream_handle is not None:
+            item.out_stream_handle.stop()
+        if item.local_stream_handle is not None:
+            item.local_stream_handle.stop()
+        if item in self.playing_items:
+            self.playing_items.remove(item)
+        try:
+            if self.playing_tree.exists(str(item.id)):
+                self.playing_tree.delete(str(item.id))
+        except Exception:
+            pass
+
+    def _seek_item(self, item, seconds):
+        seconds = max(0.0, min(seconds, item.total_seconds))
+        start_frame = int(seconds * item.samplerate)
+
+        if item.via_mixer and item.mixer_item is not None:
+            self.mixer.seek_item(item.mixer_item, seconds)
+        else:
+            if item.out_stream_handle is not None:
+                item.out_stream_handle.stop()
+            try:
+                item.out_stream_handle = StreamHandle(item.data, item.samplerate, item.out_idx, start_frame=start_frame)
+            except Exception:
+                pass
+
+        if item.local_stream_handle is not None:
+            item.local_stream_handle.stop()
+            item.local_stream_handle = None
+        if self.play_locally.get() and item.local_idx is not None and item.local_idx != item.out_idx:
+            try:
+                item.local_stream_handle = StreamHandle(item.data, item.samplerate, item.local_idx, start_frame=start_frame)
+            except Exception:
+                item.local_stream_handle = None
+
+        item.offset_seconds = seconds
+        item.started_at = time.time()
+
+    # ---------------------------------------------------------- currently-playing list & scrub bar
+    def _on_playing_select(self, event=None):
+        sel = self.playing_tree.selection()
+        self.selected_playing_id = int(sel[0]) if sel else None
+        self._refresh_scrub_controls()
+
+    def _on_scrub_release(self, event=None):
+        self._scrub_dragging = False
+        item = self._get_playing_item(self.selected_playing_id)
+        if item is not None:
+            self._seek_item(item, self.scrub_var.get())
+
+    def _seek_selected(self, seconds):
+        item = self._get_playing_item(self.selected_playing_id)
+        if item is not None:
+            self._seek_item(item, seconds)
+
+    def _toggle_pause_selected(self):
+        item = self._get_playing_item(self.selected_playing_id)
+        if item is None:
+            return
+        if item.is_playing():
+            item.offset_seconds = item.current_seconds()
+            item.started_at = None
+            if item.via_mixer and item.mixer_item is not None:
+                self.mixer.remove_item(item.mixer_item)
+            if item.out_stream_handle is not None:
+                item.out_stream_handle.stop()
+                item.out_stream_handle = None
+            if item.local_stream_handle is not None:
+                item.local_stream_handle.stop()
+                item.local_stream_handle = None
+        else:
+            self._seek_item(item, item.offset_seconds)
+        self._refresh_scrub_controls()
+
+    def _stop_selected(self):
+        item = self._get_playing_item(self.selected_playing_id)
+        if item is None:
+            return
+        self._terminate_item(item)
+        self.selected_playing_id = None
+        self._refresh_scrub_controls()
+
+    def _refresh_scrub_controls(self):
+        item = self._get_playing_item(self.selected_playing_id)
+        if item is None:
+            self.scrub_label.config(text="(select a sound from the list above)")
+            self.scrub_scale.config(state=tk.DISABLED)
+            self.pause_btn.config(state=tk.DISABLED, text="Pause")
+            self.stop_selected_btn.config(state=tk.DISABLED)
+            self.scrub_elapsed_label.config(text="0:00")
+            self.scrub_total_label.config(text="0:00")
+            if not self._scrub_dragging:
+                self.scrub_var.set(0)
+            return
+
+        self.scrub_label.config(text=item.sound.name)
+        self.scrub_scale.config(state=tk.NORMAL, to=max(item.total_seconds, 0.01))
+        self.pause_btn.config(state=tk.NORMAL, text=("Pause" if item.is_playing() else "Resume"))
+        self.stop_selected_btn.config(state=tk.NORMAL)
+        cur = item.current_seconds()
+        self.scrub_elapsed_label.config(text=self._fmt_time(cur))
+        self.scrub_total_label.config(text=self._fmt_time(item.total_seconds))
+        if not self._scrub_dragging:
+            self.scrub_var.set(cur)
+
+    @staticmethod
+    def _fmt_time(seconds):
+        seconds = max(0, int(seconds))
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    def _update_now_playing_ui(self):
+        for item in list(self.playing_items):
+            cur = item.current_seconds()
+            if item.is_playing() and cur >= item.total_seconds - 0.05:
+                # Finished naturally.
+                if self.selected_playing_id == item.id:
+                    self.selected_playing_id = None
+                self._terminate_item(item)
+                continue
+
+            iid = str(item.id)
+            time_str = f"{self._fmt_time(cur)} / {self._fmt_time(item.total_seconds)}"
+            if self.playing_tree.exists(iid):
+                self.playing_tree.set(iid, "time", time_str)
+            else:
+                self.playing_tree.insert("", "end", iid=iid, text=item.sound.name, values=(time_str,))
+                if self.selected_playing_id == item.id:
+                    self.playing_tree.selection_set(iid)
+
+        self._refresh_scrub_controls()
+        self.root.after(150, self._update_now_playing_ui)
 
     def stop_all(self):
         sd.stop()
         self.mixer.clear_sfx()
+        for item in list(self.playing_items):
+            self._terminate_item(item)
+        self.selected_playing_id = None
+        self._refresh_scrub_controls()
 
     def panic_stop(self):
         """Immediately kill mic passthrough (e.g. feedback loop / echo) and
@@ -581,6 +919,10 @@ class SoundboardApp:
             self.passthrough_enabled.set(False)
             self.mixer.stop()
             sd.stop()
+            for item in list(self.playing_items):
+                self._terminate_item(item)
+            self.selected_playing_id = None
+            self._refresh_scrub_controls()
             self.status_label.config(
                 text="Passthrough: OFF (panic stop) - re-enable when ready", fg="#900"
             )
@@ -588,6 +930,24 @@ class SoundboardApp:
             _do_it()
         else:
             self.root.after(0, _do_it)
+
+    # ---------------------------------------------------------- update checker
+    def _handle_update_result(self, latest_version, html_url, manual):
+        def _apply():
+            if latest_version:
+                self.update_banner.config(
+                    text=f"Update available: {latest_version}  (you're on v{APP_VERSION}) - click to open the release page",
+                    cursor="hand2",
+                )
+                self.update_banner.unbind("<Button-1>")
+                self.update_banner.bind("<Button-1>", lambda e: webbrowser.open(html_url))
+                self.update_banner.pack(fill=tk.X, padx=10, pady=(6, 0), before=self.root.pack_slaves()[0])
+            elif manual:
+                messagebox.showinfo("Up to date", f"You're running the latest version (v{APP_VERSION}).")
+        self.root.after(0, _apply)
+
+    def _manual_check_update(self):
+        check_for_update(APP_VERSION, GITHUB_REPO, lambda lv, url: self._handle_update_result(lv, url, manual=True))
 
     # ---------------------------------------------------------- persistence
     def _save_config(self):
