@@ -38,15 +38,15 @@ Idk why you would do this because there is a pre built .exe in Releases but this
 
 3. \*When it finishes it will be in C:\\Path\\The\\Bat\\Is\\In\\dist\\ as VoiceChatSoundboard.exe
 
-**Supported File Types:**
+## **Supported File Types:**
 
-**.wav (RECOMMENDED AND USED BY BUILT-IN YOUTUBE VIDEO DOWNLOADER)**
+.wav (**RECOMMENDED AND USED BY BUILT-IN YOUTUBE VIDEO DOWNLOADER**)
 
-**.mp3 **
+.mp3
 
-**.ogg**
+.ogg
 
-**.aac (VERY BUGGY a command promnt opens when you play a .aac AND you have to press all file types when you add it)**
+.aac (**VERY BUGGY a command promnt opens when you play a .aac AND you have to press all file types when you add it**)
 
 ## **Troubleshooting**
 
