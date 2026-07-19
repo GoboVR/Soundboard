@@ -9,12 +9,24 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+
+      - name: Show exactly what's being built
+        run: |
+          echo "Branch/ref: $env:GITHUB_REF"
+          echo "Commit SHA: $env:GITHUB_SHA"
+          git log -1 --format="Commit: %H%nMessage: %s%nDate: %ci"
+          echo "---"
+          echo "APP_VERSION in soundboard.py:"
+          Select-String -Path soundboard.py -Pattern "^APP_VERSION"
 
       - name: Set up Python
         uses: actions/setup-python@v5
