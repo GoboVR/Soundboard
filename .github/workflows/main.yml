@@ -43,14 +43,16 @@ jobs:
       - name: Build portable exe
         run: |
           python -m PyInstaller --noconfirm --onefile --windowed `
-            --name "VoiceChatSoundboard" `
+            --name "GobosSoundboard" `
+            --icon "assets\icon.ico" `
+            --add-data "assets\icon.ico;." `
             --collect-all sounddevice `
             --collect-all soundfile `
             --collect-all keyboard `
             soundboard.py
 
       - name: Rename portable exe for release clarity
-        run: Copy-Item "dist\VoiceChatSoundboard.exe" "dist\VoiceChatSoundboard-Portable.exe"
+        run: Copy-Item "dist\GobosSoundboard.exe" "dist\GobosSoundboard-Portable.exe"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -64,19 +66,19 @@ jobs:
       - name: Upload portable exe artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceChatSoundboard-Portable
-          path: dist/VoiceChatSoundboard-Portable.exe
+          name: GobosSoundboard-Portable
+          path: dist/GobosSoundboard-Portable.exe
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceChatSoundboard-Setup
-          path: installer_output/VoiceChatSoundboard-Setup.exe
+          name: GobosSoundboard-Setup
+          path: installer_output/GobosSoundboard-Setup.exe
 
       - name: Attach both to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/VoiceChatSoundboard-Portable.exe
-            installer_output/VoiceChatSoundboard-Setup.exe
+            dist/GobosSoundboard-Portable.exe
+            installer_output/GobosSoundboard-Setup.exe

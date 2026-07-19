@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  Build Voice Chat Soundboard.exe
+REM  Build Gobo's Soundboard.exe
 REM  Run this ON WINDOWS, in the same folder as soundboard.py.
 REM  You need Python installed and on PATH first: https://python.org
 REM ============================================================
@@ -32,16 +32,21 @@ echo Building exe (this can take a minute or two)...
 REM Calling PyInstaller as a module (python -m PyInstaller) instead of the
 REM bare "pyinstaller" command avoids "not recognized" errors when pip's
 REM Scripts folder isn't on PATH.
+REM --icon sets the exe's own icon (Explorer/taskbar); --add-data bundles
+REM icon.ico inside the exe too, so the app can also set its own window
+REM icon at runtime via _resource_path().
 %PYCMD% -m PyInstaller --noconfirm --onefile --windowed ^
-    --name "VoiceChatSoundboard" ^
+    --name "GobosSoundboard" ^
+    --icon "assets\icon.ico" ^
+    --add-data "assets\icon.ico;." ^
     --collect-all sounddevice ^
     --collect-all soundfile ^
     --collect-all keyboard ^
     soundboard.py
 
 echo.
-if exist dist\VoiceChatSoundboard.exe (
-    echo SUCCESS. Your portable exe is at: dist\VoiceChatSoundboard.exe
+if exist dist\GobosSoundboard.exe (
+    echo SUCCESS. Your portable exe is at: dist\GobosSoundboard.exe
     echo You can copy that single file anywhere and run it directly.
 ) else (
     echo Something went wrong - scroll up for the error from PyInstaller.
@@ -57,8 +62,8 @@ if not exist %ISCC% set ISCC="C:\Program Files\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
     echo Found Inno Setup - building installer too...
     %ISCC% installer.iss
-    if exist installer_output\VoiceChatSoundboard-Setup.exe (
-        echo SUCCESS. Your installer is at: installer_output\VoiceChatSoundboard-Setup.exe
+    if exist installer_output\GobosSoundboard-Setup.exe (
+        echo SUCCESS. Your installer is at: installer_output\GobosSoundboard-Setup.exe
     ) else (
         echo Installer build failed - scroll up for the error from ISCC.
     )

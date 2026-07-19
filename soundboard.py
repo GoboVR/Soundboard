@@ -1,6 +1,6 @@
 """
-Voice Chat Soundboard
-----------------------
+Gobo's Soundboard
+------------------
 A free, unlimited soundboard that routes sound effects through VB-Audio CABLE
 so they can be heard by others in Discord / games / voice chat.
 
@@ -86,7 +86,7 @@ def _app_dir():
         return candidate
     except Exception:
         appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
-        fallback = os.path.join(appdata, "VoiceChatSoundboard")
+        fallback = os.path.join(appdata, "GobosSoundboard")
         os.makedirs(fallback, exist_ok=True)
         return fallback
 
@@ -103,9 +103,25 @@ def safe_log(msg):
 
 CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
-APP_VERSION = "1.2.1"
+APP_NAME = "Gobo's Soundboard"
+
+APP_VERSION = "1.1.0"
 
 GITHUB_REPO = "GoboVR/Soundboard"
+
+ICON_FILENAME = "icon.ico"
+
+
+def _resource_path(filename):
+    """Path to a bundled resource (like the icon) that works both when
+    running the raw .py and when frozen by PyInstaller (--add-data puts
+    bundled files in sys._MEIPASS at runtime)."""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, filename)
+
 
 MIX_SAMPLERATE = 48000  # fixed rate used for the live mic+sfx mixer
 MIX_BLOCKSIZE = 1024
@@ -479,9 +495,10 @@ class MicSfxMixer:
 class SoundboardApp:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"Voice Chat Soundboard v{APP_VERSION}")
+        self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("950x760")
         self.root.minsize(650, 480)
+        self._set_window_icon()
 
         self.sounds = []
         self.volume = tk.DoubleVar(value=1.0)
@@ -498,6 +515,17 @@ class SoundboardApp:
         self._load_config()
 
         check_for_update(APP_VERSION, GITHUB_REPO, lambda lv, url: self._handle_update_result(lv, url, manual=False))
+
+    def _set_window_icon(self):
+        """Sets the window/taskbar icon from the bundled icon.ico. Safe
+        no-op if the file isn't present (e.g. running the raw .py without
+        the assets folder next to it)."""
+        icon_path = _resource_path(ICON_FILENAME)
+        try:
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception:
+            pass  # e.g. non-Windows Tk builds that don't support .ico
 
     # ---------------------------------------------------------- UI setup
     def _build_ui(self):

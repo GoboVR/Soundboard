@@ -1,5 +1,5 @@
-; Inno Setup script for Voice Chat Soundboard.
-; Compiles the already-built portable exe (dist\VoiceChatSoundboard.exe)
+; Inno Setup script for Gobo's Soundboard.
+; Compiles the already-built portable exe (dist\GobosSoundboard.exe)
 ; into a proper Windows installer with Start Menu / desktop shortcuts and
 ; an uninstaller. Also checks whether VB-Audio CABLE looks installed and,
 ; if not, offers to open the download page.
@@ -12,10 +12,10 @@
   #define MyAppVersion "1.1.0"
 #endif
 
-#define MyAppName "Voice Chat Soundboard"
+#define MyAppName "Gobo's Soundboard"
 #define MyAppPublisher "GoboVR"
 #define MyAppURL "https://github.com/GoboVR/Soundboard"
-#define MyAppExeName "VoiceChatSoundboard.exe"
+#define MyAppExeName "GobosSoundboard.exe"
 
 [Setup]
 ; Fixed AppId so upgrades/uninstalls recognize previous installs correctly.
@@ -31,11 +31,12 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=installer_output
-OutputBaseFilename=VoiceChatSoundboard-Setup
+OutputBaseFilename=GobosSoundboard-Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile=assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
@@ -45,7 +46,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "dist\VoiceChatSoundboard.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "dist\GobosSoundboard.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
