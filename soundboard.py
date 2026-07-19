@@ -103,7 +103,7 @@ def safe_log(msg):
 
 CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.1.0"
 
 GITHUB_REPO = "GoboVR/Soundboard"
 
@@ -217,6 +217,22 @@ def prepare_for_stream(data, orig_sr, target_sr, target_channels):
     return np.ascontiguousarray(data, dtype=np.float32)
 
 
+def _wasapi_extra_settings(device_idx):
+    """If this device is on the WASAPI host API, return settings that let
+    Windows' audio engine auto-convert sample rate/channel mismatches
+    instead of PortAudio requiring a bit-perfect format match. Returns
+    None for non-WASAPI devices (MME/DirectSound/WDM-KS), where this
+    setting isn't applicable."""
+    try:
+        dev = sd.query_devices(device_idx)
+        hostapi = sd.query_hostapis(dev["hostapi"])
+        if "wasapi" in hostapi["name"].lower():
+            return sd.WasapiSettings(auto_convert=True)
+    except Exception:
+        pass
+    return None
+
+
 class StreamHandle:
     """A controllable playback of one numpy buffer on one device, starting
     at an optional frame offset. Unlike a bare sd.play() call, this can be
@@ -303,17 +319,77 @@ class MicSfxMixer:
         self.stop()
         self._mic_queue = queue.Queue(maxsize=50)
         self._active_sfx = []
-        self.input_stream = sd.InputStream(
-            device=mic_device, channels=self.channels, samplerate=self.samplerate,
-            blocksize=self.blocksize, dtype="float32", callback=self._input_cb,
+
+        attempts = self._build_start_attempts(mic_device, out_device)
+        last_error = "no attempts were made"
+
+        for samplerate, channels, mic_extra, out_extra, label in attempts:
+            input_stream = None
+            output_stream = None
+            try:
+                input_stream = sd.InputStream(
+                    device=mic_device, channels=channels, samplerate=samplerate,
+                    blocksize=self.blocksize, dtype="float32", callback=self._input_cb,
+                    extra_settings=mic_extra,
+                )
+                output_stream = sd.OutputStream(
+                    device=out_device, channels=channels, samplerate=samplerate,
+                    blocksize=self.blocksize, dtype="float32", callback=self._output_cb,
+                    extra_settings=out_extra,
+                )
+                input_stream.start()
+                output_stream.start()
+            except Exception as e:
+                last_error = f"[tried {label}] {e}"
+                for s in (input_stream, output_stream):
+                    if s is not None:
+                        try:
+                            s.close()
+                        except Exception:
+                            pass
+                continue
+
+            # This combo worked.
+            self.samplerate = samplerate
+            self.channels = channels
+            self.input_stream = input_stream
+            self.output_stream = output_stream
+            self.running = True
+            return
+
+        raise RuntimeError(
+            f"Tried {len(attempts)} sample rate/channel/format combinations and none "
+            f"worked. Most recent error: {last_error}"
         )
-        self.output_stream = sd.OutputStream(
-            device=out_device, channels=self.channels, samplerate=self.samplerate,
-            blocksize=self.blocksize, dtype="float32", callback=self._output_cb,
-        )
-        self.input_stream.start()
-        self.output_stream.start()
-        self.running = True
+
+    def _build_start_attempts(self, mic_device, out_device):
+        """Ordered list of (samplerate, channels, mic_extra, out_extra,
+        label) combos to try. WASAPI devices get auto_convert so Windows'
+        audio engine handles small mismatches itself, which resolves most
+        'works everywhere except here' cases without the user having to
+        hand-match settings in Windows' Sound control panel."""
+        mic_wasapi = _wasapi_extra_settings(mic_device)
+        out_wasapi = _wasapi_extra_settings(out_device)
+
+        def default_rate(device_idx):
+            try:
+                return int(sd.query_devices(device_idx)["default_samplerate"])
+            except Exception:
+                return MIX_SAMPLERATE
+
+        rates = []
+        for r in (MIX_SAMPLERATE, default_rate(mic_device), default_rate(out_device), 44100):
+            if r not in rates:
+                rates.append(r)
+
+        attempts = []
+        for rate in rates:
+            attempts.append((rate, 2, mic_wasapi, out_wasapi, f"{rate}Hz stereo (WASAPI auto-convert)"))
+        for rate in rates:
+            attempts.append((rate, 1, mic_wasapi, out_wasapi, f"{rate}Hz mono (WASAPI auto-convert)"))
+        for rate in rates:
+            attempts.append((rate, 2, None, None, f"{rate}Hz stereo (no auto-convert)"))
+        return attempts
 
     def stop(self):
         for s in (self.input_stream, self.output_stream):
@@ -586,8 +662,14 @@ class SoundboardApp:
     # ---------------------------------------------------------- devices
     def _refresh_devices(self):
         devices = sd.query_devices()
-        out_names = [f"{i}: {d['name']}" for i, d in enumerate(devices) if d["max_output_channels"] > 0]
-        in_names = [f"{i}: {d['name']}" for i, d in enumerate(devices) if d["max_input_channels"] > 0]
+        hostapis = sd.query_hostapis()
+
+        def label(i, d):
+            api_name = hostapis[d["hostapi"]]["name"].replace("Windows ", "")
+            return f"{i}: {d['name']} [{api_name}]"
+
+        out_names = [label(i, d) for i, d in enumerate(devices) if d["max_output_channels"] > 0]
+        in_names = [label(i, d) for i, d in enumerate(devices) if d["max_input_channels"] > 0]
 
         def fill_menu(menu_widget, var, names, prefer_substring=None):
             menu = menu_widget["menu"]
@@ -597,10 +679,10 @@ class SoundboardApp:
             if not var.get() or var.get() not in names:
                 chosen = None
                 if prefer_substring:
-                    for n in names:
-                        if prefer_substring.lower() in n.lower():
-                            chosen = n
-                            break
+                    candidates = [n for n in names if prefer_substring.lower() in n.lower()]
+                    if candidates:
+                        wasapi_candidates = [n for n in candidates if "wasapi" in n.lower()]
+                        chosen = (wasapi_candidates or candidates)[0]
                 var.set(chosen or (names[0] if names else ""))
 
         fill_menu(self.out_device_menu, self.out_device_var, out_names, prefer_substring="CABLE Input")
@@ -627,10 +709,17 @@ class SoundboardApp:
             except Exception as e:
                 messagebox.showerror(
                     "Passthrough Error",
-                    f"Could not start mic passthrough: {e}\n\n"
-                    "Tip: open Windows Sound settings, click your mic and CABLE Input's "
-                    "'Properties' -> 'Advanced', and set both to the same sample rate "
-                    f"(e.g. 48000 Hz), then try again.",
+                    "Could not start mic passthrough - tried several sample rates, "
+                    "channel counts, and WASAPI auto-convert automatically, none worked.\n\n"
+                    f"{e}\n\n"
+                    "This is usually one of:\n"
+                    "- Another app has exclusive control of the mic or CABLE Input "
+                    "(close Discord/OBS/etc. and try again)\n"
+                    "- Windows Privacy settings are blocking microphone access for "
+                    "desktop apps (Settings -> Privacy & security -> Microphone)\n"
+                    "- You picked two entries for the 'same' device that are actually "
+                    "different backends - check the [WASAPI]/[MME]/[DirectSound]/[WDM-KS] "
+                    "tag at the end of each dropdown entry and try a different one",
                 )
                 self.passthrough_enabled.set(False)
                 return
