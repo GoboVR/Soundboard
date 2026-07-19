@@ -105,7 +105,7 @@ CONFIG_PATH = os.path.join(_app_dir(), "soundboard_config.json")
 
 APP_NAME = "Gobo's Soundboard"
 
-APP_VERSION = "1.3"
+APP_VERSION = "1.3.1"
 
 GITHUB_REPO = "GoboVR/Soundboard"
 
